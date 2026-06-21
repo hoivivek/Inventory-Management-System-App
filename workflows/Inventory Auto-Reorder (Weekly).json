@@ -1,0 +1,360 @@
+{
+  "name": "Inventory Auto-Reorder (Weekly)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 6
+            }
+          ]
+        }
+      },
+      "id": "f54e218c-51bb-4a0f-b133-68895441925c",
+      "name": "Weekly Schedule (Mon 06:00)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        240,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT i.id AS item_id, i.serial_id, i.item_name, i.sku, i.price, i.quantity, i.category, i.distributor, i.low_stock_threshold\nFROM inventory i\nWHERE i.quantity <= i.low_stock_threshold\n  AND NOT EXISTS (\n    SELECT 1 FROM orders o\n    WHERE o.item_id = i.id AND o.status = 'pending'\n  )\nORDER BY i.category, i.item_name;",
+        "options": {}
+      },
+      "id": "44a8b303-0f84-4240-ac5a-972972f250b3",
+      "name": "Find Low Stock Items",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        544,
+        304
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "sjnKL5IIjWedGMN3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "reorder-qty",
+              "name": "reorder_quantity",
+              "value": "={{ Math.max(Math.round($json.low_stock_threshold * 2), 1) }}",
+              "type": "number"
+            },
+            {
+              "id": "reorder-total",
+              "name": "total_amount",
+              "value": "={{ $json.price * Math.max(Math.round($json.low_stock_threshold * 2), 1) }}",
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "869d010f-cfa7-41c2-9815-0c403d21224f",
+      "name": "Calculate Reorder Amounts",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        848,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO orders (distributor, item_id, item_name, order_quantity, total_amount, status, created_by)\nVALUES ('{{ $json.distributor }}', {{ $json.item_id }}, '{{ $json.item_name }}', {{ $json.reorder_quantity }}, {{ $json.total_amount }}, 'pending', 'n8n_auto_reorder')\nRETURNING id, item_name, order_quantity, total_amount, distributor;",
+        "options": {
+          "queryReplacement": "positional"
+        }
+      },
+      "id": "8609bb36-5ace-455b-aba9-1810a89bbded",
+      "name": "Create Pending Order",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1152,
+        304
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "sjnKL5IIjWedGMN3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_log (action, table_name, record_id, performed_by, details)\nVALUES ('AUTO_ORDER', 'orders', {{ $json.id }}, 'n8n_auto_reorder', '{{ 'Auto-reordered ' + $json.order_quantity + 'x ' + $json.item_name + ' from ' + $json.distributor }}');",
+        "options": {
+          "queryReplacement": "positional"
+        }
+      },
+      "id": "44507bd5-477b-470a-b4b6-885fa9af71b6",
+      "name": "Log Audit Entry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1440,
+        304
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "sjnKL5IIjWedGMN3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, item_name, order_quantity, total_amount, distributor\nFROM orders\nWHERE created_by = 'n8n_auto_reorder' AND status = 'pending'\n  AND created_at >= NOW() - INTERVAL '5 minutes'\nORDER BY id DESC;",
+        "options": {}
+      },
+      "id": "70671655-153f-4edb-ba6b-1c14e9700b60",
+      "name": "Fetch Orders Created This Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1744,
+        304
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "sjnKL5IIjWedGMN3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.id }}",
+              "operator": {
+                "type": "number",
+                "operation": "exists"
+              },
+              "id": "0d2cd72d-cc41-4cdb-895c-c34773c9426e"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6596c5cc-5638-4987-91a9-efa4fe213542",
+      "name": "Were Orders Created?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1744,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "email-subject",
+              "name": "subject",
+              "value": "={{ \"Auto-Reorder Alert: \" + $(\"Fetch Orders Created This Run\").all().length + \" item(s) need approval\" }}",
+              "type": "string"
+            },
+            {
+              "id": "email-html",
+              "name": "html_body",
+              "value": "={{ \"<h2>Weekly Auto-Reorder Report</h2>\" + \"<p>The following \" + $(\"Fetch Orders Created This Run\").all().length + \" item(s) were at or below their low-stock threshold. \" + \"Pending orders have been created automatically and need your review and approval.</p>\" + \"<table border=\\\"1\\\" cellpadding=\\\"8\\\" cellspacing=\\\"0\\\" style=\\\"border-collapse:collapse;font-family:sans-serif;\\\">\" + \"<tr style=\\\"background:#f0f0f0;\\\"><th>Order #</th><th>Item</th><th>Qty</th><th>Total</th><th>Distributor</th></tr>\" + $(\"Fetch Orders Created This Run\").all().map(item => \"<tr><td>#\" + item.json.id + \"</td><td>\" + item.json.item_name + \"</td><td>\" + item.json.order_quantity + \"</td><td>$\" + Number(item.json.total_amount).toFixed(2) + \"</td><td>\" + item.json.distributor + \"</td></tr>\").join(\"\") + \"</table>\" + \"<p style=\\\"margin-top:16px;\\\">Log in to the Inventory Manager app (Orders &rarr; Pending Approval) to review, edit quantities if needed, and approve or reject each order.</p>\" + \"<p style=\\\"color:#888;font-size:12px;\\\">Generated automatically by the n8n weekly auto-reorder workflow.</p>\" }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6b5fc8e7-bd68-4676-a366-e097dcc9f1bd",
+      "name": "Build Alert Email",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2048,
+        304
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "sendTo": "admin@example.com",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.html_body }}",
+        "options": {
+          "bccList": "",
+          "ccList": ""
+        }
+      },
+      "id": "8538c6e4-31d2-4f92-b8d6-d86602e9dad8",
+      "name": "Send Admin Alert Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2352,
+        304
+      ],
+      "webhookId": "39880a6b-317d-418f-8b6c-03386f96f5cc",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "F2FBM3s6rVlvcJLa",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Weekly Auto-Reorder Workflow\n\n1. Runs every Monday at 06:00\n2. Finds inventory items at/below low_stock_threshold with no existing pending order\n3. Calculates reorder qty (2x threshold) and inserts a pending order per item\n4. Logs each action to audit_log\n5. Re-fetches everything created in this run as one batch, builds ONE combined email,\n   and sends it to the admin for review/edit/approval\n\nNote: orders are created as pending - no stock changes happen until an admin approves them in the app.\n\nZero-item safety: if no items are low on stock, Find Low Stock Items returns 0 rows and every downstream node simply skips for this run - no email, no error.",
+        "height": 200,
+        "width": 900,
+        "color": 4
+      },
+      "id": "78a24e21-27be-47fc-a9df-a2da1659539b",
+      "name": "Sticky Note b3757f01",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Weekly Schedule (Mon 06:00)": {
+      "main": [
+        [
+          {
+            "node": "Find Low Stock Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Low Stock Items": {
+      "main": [
+        [
+          {
+            "node": "Calculate Reorder Amounts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Reorder Amounts": {
+      "main": [
+        [
+          {
+            "node": "Create Pending Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Pending Order": {
+      "main": [
+        [
+          {
+            "node": "Log Audit Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Audit Entry": {
+      "main": [
+        [
+          {
+            "node": "Fetch Orders Created This Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Orders Created This Run": {
+      "main": [
+        [
+          {
+            "node": "Were Orders Created?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Were Orders Created?": {
+      "main": [
+        [
+          {
+            "node": "Build Alert Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Alert Email": {
+      "main": [
+        [
+          {
+            "node": "Send Admin Alert Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "tHQxJ8ziBoBUFcBc"
+  },
+  "versionId": "f15a35c7-0a60-46ce-9896-1167d05d9b66",
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp",
+    "instanceId": "c89ba24ed3f345de616fdf62042d99ebc54e902460595ef15d859a74052adc79"
+  },
+  "nodeGroups": [],
+  "id": "fzh9lo6GpWy9vxLa",
+  "tags": []
+}
