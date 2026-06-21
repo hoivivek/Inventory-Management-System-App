@@ -1,4 +1,4 @@
-# Inventory Management App
+# Inventory Management System App
 
 > **TLDR:** A full-featured Streamlit inventory management system with role-based auth, order workflows, sales analytics, and an AI chatbot — backed by Supabase (PostgreSQL), with weekly auto-reorder and error alerting handled by n8n.
 
